@@ -2,7 +2,6 @@ from __future__ import annotations
 import json
 import time
 import uuid
-import asyncio
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
@@ -25,12 +24,34 @@ _LOCAL_MODEL_ID = "ia-test-local"
 _LOCAL_CREATED = int(time.time())
 
 
+# ── provider factory ───────────────────────────────────────────────────────
+
+def _build_provider(settings) -> ModelProvider:  # type: ignore[return]
+    name = settings.model_provider.lower()
+    if name == "openai":
+        from ia_test.providers.openai import OpenAIProvider
+        return OpenAIProvider(api_key=settings.openai_api_key, model=settings.model_name)
+    if name == "anthropic":
+        from ia_test.providers.anthropic import AnthropicProvider
+        return AnthropicProvider(
+            api_key=settings.anthropic_api_key,
+            model=settings.model_name,
+            base_url=settings.anthropic_base_url or None,
+        )
+    raise ValueError(
+        f"Unknown model_provider '{name}'. "
+        "Set MODEL_PROVIDER=openai or MODEL_PROVIDER=anthropic."
+    )
+
+
+# ── app factory ────────────────────────────────────────────────────────────
+
 def create_app(
     provider: ModelProvider,
     db: MemoryDatabase,
     rate_limiter: RateLimiter | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="IA-test Local API", version="0.1.0")
+    _app = FastAPI(title="IA-test Local API", version="0.1.0")
     injector = ContextInjector(db)
 
     # ── helpers ───────────────────────────────────────────────────────────
@@ -45,7 +66,6 @@ def create_app(
             raise HTTPException(status_code=429, detail=str(exc)) from exc
 
     def _build_messages(req: MessagesRequest, system_text: str) -> list[Message]:
-        """Convert the Anthropic-style request into provider Message objects."""
         msgs: list[Message] = []
         if system_text:
             msgs.append(Message(role="system", content=system_text))
@@ -58,8 +78,6 @@ def create_app(
         messages: list[Message],
         msg_id: str,
     ) -> AsyncIterator[str]:
-        """Yield Server-Sent Events compatible with the Anthropic streaming format."""
-        # message_start
         start = {
             "type": "message_start",
             "message": {
@@ -74,21 +92,16 @@ def create_app(
             },
         }
         yield f"data: {json.dumps(start)}\n\n"
-
-        # content_block_start
         yield f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
 
-        # Run the actual provider call (non-streaming internally; wrap into one delta)
         try:
             response = await provider.complete(messages, temperature=req.temperature)
             text = response.content
             yield f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': text}})}\n\n"
             output_tokens = response.usage.completion_tokens if response.usage else len(text.split())
-            input_tokens = response.usage.prompt_tokens if response.usage else 0
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': f'[Error: {exc}]'}})}\n\n"
             output_tokens = 0
-            input_tokens = 0
 
         yield f"data: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
         yield f"data: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': output_tokens}})}\n\n"
@@ -96,7 +109,7 @@ def create_app(
 
     # ── routes ────────────────────────────────────────────────────────────
 
-    @app.get("/health")
+    @_app.get("/health")
     async def health() -> dict:
         entries = await db.query(limit=1000)
         return {
@@ -105,18 +118,13 @@ def create_app(
             "model": _LOCAL_MODEL_ID,
         }
 
-    @app.get("/v1/models")
+    @_app.get("/v1/models")
     async def list_models() -> ModelsResponse:
         return ModelsResponse(
-            data=[
-                ModelInfo(
-                    id=_LOCAL_MODEL_ID,
-                    created=_LOCAL_CREATED,
-                )
-            ]
+            data=[ModelInfo(id=_LOCAL_MODEL_ID, created=_LOCAL_CREATED)]
         )
 
-    @app.post("/v1/messages", response_model=None)
+    @_app.post("/v1/messages", response_model=None)
     async def create_message(req: MessagesRequest, request: Request) -> JSONResponse | StreamingResponse:
         await _check_rate(rate_limiter)
 
@@ -148,4 +156,31 @@ def create_app(
         )
         return JSONResponse(resp.model_dump())
 
-    return app
+    return _app
+
+
+# ── module-level app factory for uvicorn --factory ─────────────────────────
+# Usage:
+#   python -m uvicorn ia_test.api.server:app_factory --factory --host 127.0.0.1 --port 8000
+#
+# Using --factory ensures this runs only when uvicorn starts, not at import time,
+# so pytest collection is unaffected.
+
+def app_factory() -> FastAPI:
+    import asyncio
+    import pathlib
+    from ia_test.core.settings import Settings
+
+    settings = Settings()
+    provider = _build_provider(settings)
+
+    pathlib.Path(settings.memory_db_path).parent.mkdir(parents=True, exist_ok=True)
+    db = MemoryDatabase(settings.memory_db_path)
+
+    asyncio.run(db.connect())
+
+    rate_limiter = RateLimiter(
+        max_per_hour=settings.max_api_calls_per_hour,
+        max_per_day=settings.max_api_calls_per_day,
+    )
+    return create_app(provider=provider, db=db, rate_limiter=rate_limiter)

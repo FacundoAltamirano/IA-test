@@ -9,6 +9,7 @@ description = "Experimental AI system with persistent exploratory motivation"
 requires-python = ">=3.11"
 dependencies = [
     "openai>=1.50.0",
+    "anthropic>=0.40.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic-settings>=2.6.0",

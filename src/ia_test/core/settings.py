@@ -5,9 +5,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Model provider
-    model_provider: str = "openai"
+    model_provider: str = "openai"   # "openai" | "anthropic"
     model_name: str = "gpt-4o-mini"
     openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = ""     # optional — override for local proxies
 
     # Safety limits
     max_autonomous_cycles: int = 50
