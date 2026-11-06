@@ -55,6 +55,19 @@ class ExplorationCompleted(BaseEvent):
 
 
 @dataclass
+class ExplorationStarted(BaseEvent):
+    question_id: str = ""
+    content: str = ""
+
+
+@dataclass
+class DiscoveryRecorded(BaseEvent):
+    entry_id: str = ""
+    question_id: str = ""
+    source: str = ""  # synthesis | web_search | inference
+
+
+@dataclass
 class ProposalGenerated(BaseEvent):
     proposal_id: str = ""
     description: str = ""
