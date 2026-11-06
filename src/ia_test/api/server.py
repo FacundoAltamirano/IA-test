@@ -226,6 +226,11 @@ _CHAT_HTML = """<!doctype html>
         width:42px;height:42px;cursor:pointer;font-size:18px;flex-shrink:0;
         display:flex;align-items:center;justify-content:center;transition:opacity .15s}
   #send:disabled{opacity:.4;cursor:not-allowed}
+  #voice-btn{background:transparent;border:1px solid var(--border);border-radius:10px;
+             width:42px;height:42px;cursor:pointer;font-size:18px;flex-shrink:0;
+             display:flex;align-items:center;justify-content:center;transition:all .15s;color:var(--muted)}
+  #voice-btn.active{background:#1a2a1a;border-color:#4ade80;color:#4ade80}
+  #voice-btn:hover{border-color:var(--accent2);color:var(--accent2)}
 
   /* memory badge */
   .mem-badge{display:inline-block;background:#1e2a1e;border:1px solid #2a3f2a;
@@ -240,15 +245,32 @@ _CHAT_HTML = """<!doctype html>
 
   /* proposals panel */
   #proposals-panel{padding:20px;overflow-y:auto;gap:14px}
-  .prop-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:8px}
-  .prop-card h3{font-size:.85rem;color:var(--accent2);margin:0}
-  .prop-card .path{font-size:.75rem;color:var(--muted);font-family:monospace}
-  .prop-card p{font-size:.85rem;line-height:1.5;margin:0}
-  .prop-card .changes{background:#111;border-radius:6px;padding:10px;font-size:.8rem;white-space:pre-wrap;color:#ccc;max-height:120px;overflow-y:auto}
-  .prop-actions{display:flex;gap:8px;margin-top:4px}
-  .btn-review{background:transparent;border:1px solid var(--accent);color:var(--accent2);border-radius:6px;padding:5px 14px;cursor:pointer;font-size:.8rem}
-  .btn-review:hover{background:var(--accent);color:#fff}
+  .prop-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:10px;transition:border-color .2s}
+  .prop-card.analyzed{border-color:var(--accent)}
+  .prop-card.applied{border-color:#4ade80;opacity:.75}
+  .prop-card h3{font-size:.88rem;color:var(--accent2);margin:0;line-height:1.4}
+  .prop-card .path{font-size:.72rem;color:var(--muted);font-family:monospace;background:#111;padding:2px 7px;border-radius:4px;width:fit-content}
+  .prop-card p{font-size:.84rem;line-height:1.5;margin:0;color:#bbb}
+  .ai-summary{background:#0d1a0d;border:1px solid #2a4a2a;border-radius:8px;padding:12px;font-size:.84rem;line-height:1.6;color:#a8e6a8}
+  .ai-summary::before{content:"🤖 Resumen IA · ";font-weight:600;color:#4ade80}
+  .diff-block{background:#0a0a0a;border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:260px;font-size:.78rem;font-family:monospace;line-height:1.6}
+  .diff-block .diff-header{padding:6px 10px;background:#111;color:var(--muted);font-size:.72rem;border-bottom:1px solid var(--border)}
+  .diff-line{padding:0 10px;white-space:pre}
+  .diff-line.add{background:#0d1f0d;color:#6fcf97}
+  .diff-line.del{background:#1f0d0d;color:#eb5757}
+  .diff-line.meta{color:#666}
+  .prop-actions{display:flex;gap:8px;margin-top:4px;flex-wrap:wrap}
+  .btn-analyze{background:transparent;border:1px solid var(--accent);color:var(--accent2);border-radius:7px;padding:5px 14px;cursor:pointer;font-size:.8rem;transition:all .15s}
+  .btn-analyze:hover{background:var(--accent);color:#fff}
+  .btn-apply{background:#14532d;border:1px solid #4ade80;color:#4ade80;border-radius:7px;padding:5px 14px;cursor:pointer;font-size:.8rem;transition:all .15s}
+  .btn-apply:hover{background:#166534;color:#fff}
+  .btn-apply:disabled{opacity:.4;cursor:not-allowed}
   .reviewed-badge{font-size:.75rem;color:#6fcf97;padding:5px 0}
+  .applied-badge{font-size:.75rem;color:#4ade80;padding:5px 0;font-weight:600}
+  .status-badge{display:inline-block;font-size:.68rem;padding:2px 8px;border-radius:20px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+  .status-proposed{background:#1a1a2e;color:#818cf8;border:1px solid #3730a3}
+  .status-analyzed{background:#0d1a1f;color:#38bdf8;border:1px solid #0369a1}
+  .status-applied{background:#0d1f0d;color:#4ade80;border:1px solid #166534}
   .prop-generate{display:flex;gap:8px;margin-bottom:16px}
   #module-select{flex:1;background:#111;border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-size:.85rem}
   .btn-gen{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:.85rem}
@@ -292,6 +314,7 @@ _CHAT_HTML = """<!doctype html>
   </div>
   <div id="input-area">
     <textarea id="input" placeholder="Escribí algo..." rows="1"></textarea>
+    <button id="voice-btn" title="Modo voz">🔇</button>
     <button id="send">↑</button>
   </div>
 </div>
@@ -394,7 +417,12 @@ async function sendMsg() {
 
   try {
     // First reply
-    let reply = await callAPI(history);
+    let reply;
+    if (voiceMode) {
+      reply = await callVoice(history);
+    } else {
+      reply = await callAPI(history);
+    }
     const wantsContinue = reply.endsWith(CONTINUE_TOKEN);
     const cleanReply = reply.replace(CONTINUE_TOKEN, '').trimEnd();
 
@@ -402,8 +430,8 @@ async function sendMsg() {
     appendMsg('bot', cleanReply);
     history.push({role:'assistant', content: cleanReply});
 
-    // One automatic continuation — never chain further
-    if (wantsContinue) {
+    // One automatic continuation — never chain further (text mode only)
+    if (wantsContinue && !voiceMode) {
       const typing2 = appendTyping();
       history.push({role:'user', content: '[continuá tu pensamiento]'});
       let reply2 = await callAPI(history);
@@ -422,6 +450,49 @@ async function sendMsg() {
 
   send.disabled = false;
   input.focus();
+}
+
+// ── voice mode ────────────────────────────────────────────────────────────
+const voiceBtn = document.getElementById('voice-btn');
+let voiceMode = false;
+let currentAudio = null;
+
+voiceBtn.addEventListener('click', () => {
+  voiceMode = !voiceMode;
+  voiceBtn.classList.toggle('active', voiceMode);
+  voiceBtn.textContent = voiceMode ? '🔊' : '🔇';
+  voiceBtn.title = voiceMode ? 'Modo voz activo (click para desactivar)' : 'Modo voz';
+});
+
+async function callVoice(messages) {
+  const lastUserMsg = messages.filter(m => m.role === 'user').at(-1)?.content ?? '';
+  const res = await fetch('/v1/voice', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model: 'ia-test-local',
+      max_tokens: 1024,
+      messages: messages.slice(-20),
+    }),
+  });
+
+  if (!res.ok) throw new Error(`Voice API error: ${res.status}`);
+
+  const textHeader = res.headers.get('X-Text-Response');
+  const textReply = textHeader
+    ? decodeURIComponent(escape(atob(textHeader)))
+    : '(respuesta de voz)';
+
+  const blob = await res.blob();
+  if (blob.size > 0) {
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    const url = URL.createObjectURL(blob);
+    currentAudio = new Audio(url);
+    currentAudio.onended = () => URL.revokeObjectURL(url);
+    currentAudio.play().catch(err => console.warn('Audio play failed:', err));
+  }
+
+  return textReply;
 }
 
 send.addEventListener('click', sendMsg);
@@ -461,17 +532,60 @@ async function loadModules() {
   } catch {}
 }
 
+function renderDiff(diff) {
+  if (!diff || !diff.trim()) return '<div style="color:var(--muted);font-size:.8rem;padding:8px">Sin cambios concretos generados.</div>';
+  const lines = diff.split('\n');
+  const rows = lines.map(l => {
+    if (l.startsWith('+') && !l.startsWith('+++')) return `<div class="diff-line add">${escHtml(l)}</div>`;
+    if (l.startsWith('-') && !l.startsWith('---')) return `<div class="diff-line del">${escHtml(l)}</div>`;
+    if (l.startsWith('@@') || l.startsWith('---') || l.startsWith('+++')) return `<div class="diff-line meta">${escHtml(l)}</div>`;
+    return `<div class="diff-line">${escHtml(l)}</div>`;
+  }).join('');
+  return `<div class="diff-block"><div class="diff-header">📄 Diff propuesto</div>${rows}</div>`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function statusBadge(status) {
+  const cls = status === 'APPLIED' ? 'status-applied' : status === 'ANALYZED' ? 'status-analyzed' : 'status-proposed';
+  const label = status === 'APPLIED' ? '✓ Aplicada' : status === 'ANALYZED' ? '⚡ Analizada' : '◎ Propuesta';
+  return `<span class="status-badge ${cls}">${label}</span>`;
+}
+
 function renderProposal(p) {
-  const reviewed = p.reviewed_at
-    ? `<div class="reviewed-badge">✓ Revisada ${p.reviewed_at.slice(0,10)}</div>`
-    : `<button class="btn-review" data-id="${p.id}">Marcar revisada</button>`;
+  const isApplied = p.status === 'APPLIED';
+  const isAnalyzed = p.status === 'ANALYZED' || isApplied;
+
+  const summary = p.ai_summary
+    ? `<div class="ai-summary">${escHtml(p.ai_summary)}</div>`
+    : '';
+
+  const diffBlock = isAnalyzed && p.diff
+    ? renderDiff(p.diff)
+    : '';
+
+  const actions = isApplied
+    ? `<div class="applied-badge">✅ Cambio aplicado${p.applied_at ? ' · ' + p.applied_at.slice(0,10) : ''}</div>`
+    : `
+      <button class="btn-analyze" data-id="${p.id}" ${isAnalyzed ? 'style="opacity:.5"' : ''}>
+        ${isAnalyzed ? '🔄 Re-analizar' : '🔍 Analizar con IA'}
+      </button>
+      ${isAnalyzed && p.diff ? `<button class="btn-apply" data-id="${p.id}">⚡ Aprobar y aplicar</button>` : ''}
+    `;
+
   return `
-    <div class="prop-card" id="prop-${p.id}">
-      <div class="path">${p.target_path}</div>
-      <h3>${p.description}</h3>
-      <p>${p.rationale}</p>
-      <div class="changes">${p.suggested_changes}</div>
-      <div class="prop-actions">${reviewed}</div>
+    <div class="prop-card ${isAnalyzed ? 'analyzed' : ''} ${isApplied ? 'applied' : ''}" id="prop-${p.id}">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div class="path">${escHtml(p.target_path)}</div>
+        ${statusBadge(p.status)}
+      </div>
+      <h3>${escHtml(p.description)}</h3>
+      <p>${escHtml(p.rationale)}</p>
+      ${summary}
+      ${diffBlock}
+      <div class="prop-actions">${actions}</div>
     </div>`;
 }
 
@@ -480,24 +594,59 @@ async function loadProposals() {
     const r = await fetch('/v1/proposals');
     const d = await r.json();
     if (!d.proposals.length) {
-      propList.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No hay propuestas todavía. Elegí un módulo y hacé clic en "Proponer mejora".</p>';
+      propList.innerHTML = '<p style="color:var(--muted);font-size:.85rem;padding:4px 0">No hay propuestas todavía. Elegí un módulo y hacé clic en "Proponer mejora".</p>';
     } else {
       propList.innerHTML = d.proposals.map(renderProposal).join('');
-      propList.querySelectorAll('.btn-review').forEach(btn => {
+
+      propList.querySelectorAll('.btn-analyze').forEach(btn => {
         btn.addEventListener('click', async () => {
-          await fetch(`/v1/proposals/${btn.dataset.id}/review`, {method:'POST'});
-          loadProposals();
+          const card = document.getElementById('prop-' + btn.dataset.id);
+          btn.disabled = true;
+          btn.textContent = '⏳ Analizando...';
+          try {
+            const res = await fetch(`/v1/proposals/${btn.dataset.id}/analyze`, {method:'POST'});
+            if (!res.ok) throw new Error(await res.text());
+            await loadProposals();
+          } catch(e) {
+            btn.disabled = false;
+            btn.textContent = '🔍 Analizar con IA';
+            alert('Error al analizar: ' + e.message);
+          }
+        });
+      });
+
+      propList.querySelectorAll('.btn-apply').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('¿Aplicar este cambio al código fuente?')) return;
+          btn.disabled = true;
+          btn.textContent = '⏳ Aplicando...';
+          try {
+            const res = await fetch(`/v1/proposals/${btn.dataset.id}/apply`, {method:'POST'});
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || res.statusText);
+            await loadProposals();
+            const msg = data.reloaded
+              ? `✅ Aplicado y recargado en caliente (${data.module})`
+              : `✅ Aplicado. Reiniciá el server para que tome efecto.`;
+            alert(msg);
+          } catch(e) {
+            btn.disabled = false;
+            btn.textContent = '⚡ Aprobar y aplicar';
+            alert('Error al aplicar: ' + e.message);
+          }
         });
       });
     }
-  } catch {}
+  } catch(e) {
+    propList.innerHTML = `<p style="color:#eb5757;font-size:.85rem">Error cargando propuestas: ${e.message}</p>`;
+  }
 }
 
 btnGen.addEventListener('click', async () => {
   const filePath = moduleSelect.value;
   if (!filePath) return;
   btnGen.disabled = true;
-  btnGen.textContent = 'Analizando...';
+  btnGen.textContent = '⏳ Generando propuesta...';
   try {
     await fetch('/v1/proposals/generate', {
       method: 'POST',
@@ -632,6 +781,67 @@ document.querySelectorAll('.tab').forEach(tab => {
 </script>
 </body>
 </html>"""
+
+
+# ── diff helpers ───────────────────────────────────────────────────────────
+
+def _apply_unified_diff(original: list[str], diff_text: str) -> list[str]:
+    """Apply a unified diff to a list of lines. Raises ValueError on failure."""
+    result = list(original)
+    hunk_lines: list[str] = []
+    in_hunk = False
+    old_start = 0
+    offset = 0
+
+    for raw in diff_text.splitlines(keepends=True):
+        line = raw.rstrip("\n")
+        if line.startswith("@@"):
+            if in_hunk:
+                result, offset = _apply_hunk(result, hunk_lines, old_start, offset)
+            # parse @@ -a,b +c,d @@
+            parts = line.split()
+            old_range = parts[1].lstrip("-")
+            old_start = int(old_range.split(",")[0]) - 1  # 0-indexed
+            hunk_lines = []
+            in_hunk = True
+        elif in_hunk and (line.startswith(" ") or line.startswith("+") or line.startswith("-")):
+            hunk_lines.append(raw if raw.endswith("\n") else raw + "\n")
+
+    if in_hunk and hunk_lines:
+        result, _ = _apply_hunk(result, hunk_lines, old_start, offset)
+
+    return result
+
+
+def _apply_hunk(
+    lines: list[str], hunk: list[str], old_start: int, offset: int
+) -> tuple[list[str], int]:
+    pos = old_start + offset
+    new_lines = list(lines)
+    delete_count = sum(1 for l in hunk if l.startswith("-"))
+    add_lines = [l[1:] for l in hunk if l.startswith("+")]
+
+    del new_lines[pos : pos + delete_count]
+    for i, l in enumerate(add_lines):
+        new_lines.insert(pos + i, l)
+
+    new_offset = offset + len(add_lines) - delete_count
+    return new_lines, new_offset
+
+
+def _path_to_module(rel_path: str) -> str | None:
+    """Convert src/ia_test/foo/bar.py → ia_test.foo.bar, or None if unrecognised."""
+    p = pathlib.Path(rel_path)
+    try:
+        # Strip leading src/ if present
+        parts = list(p.with_suffix("").parts)
+        if parts and parts[0] == "src":
+            parts = parts[1:]
+        if not parts:
+            return None
+        return ".".join(parts)
+    except Exception:
+        return None
 
 
 # ── app factory ────────────────────────────────────────────────────────────
@@ -819,6 +1029,84 @@ def create_app(
     async def review_proposal(proposal_id: str) -> JSONResponse:
         await db.mark_proposal_reviewed(proposal_id)
         return JSONResponse({"status": "reviewed", "id": proposal_id})
+
+    @_app.post("/v1/proposals/{proposal_id}/analyze")
+    async def analyze_proposal(proposal_id: str) -> JSONResponse:
+        """Use GPT-4o to convert the raw proposal into a concrete diff + human summary."""
+        from ia_test.self_modification.analyzer import ProposalAnalyzer
+        from ia_test.core.settings import Settings as _Settings
+
+        proposal = await db.get_proposal(proposal_id)
+        if not proposal:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+
+        try:
+            s = _Settings()
+            analyzer = ProposalAnalyzer(api_key=s.openai_api_key)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Settings error: {exc}") from exc
+
+        repo_root = pathlib.Path(__file__).parent.parent.parent.parent
+        diff, summary = await analyzer.analyze(
+            proposal_id=proposal_id,
+            target_path=proposal["target_path"],
+            description=proposal["description"],
+            rationale=proposal["rationale"],
+            suggested_changes=proposal["suggested_changes"],
+            repo_root=repo_root,
+        )
+
+        await db.save_proposal_analysis(proposal_id, diff, summary)
+        return JSONResponse({
+            "id": proposal_id,
+            "diff": diff,
+            "ai_summary": summary,
+            "has_changes": bool(diff.strip()),
+        })
+
+    @_app.post("/v1/proposals/{proposal_id}/apply")
+    async def apply_proposal(proposal_id: str) -> JSONResponse:
+        """Apply the analyzed diff to the target file and hot-reload the module."""
+        import importlib
+        import sys
+
+        proposal = await db.get_proposal(proposal_id)
+        if not proposal:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+        if not proposal.get("diff"):
+            raise HTTPException(status_code=400, detail="Proposal has no diff. Run /analyze first.")
+
+        repo_root = pathlib.Path(__file__).parent.parent.parent.parent
+        target = repo_root / proposal["target_path"]
+
+        # Apply the unified diff by parsing it manually (safe subset)
+        diff_text = proposal["diff"]
+        try:
+            original = target.read_text(encoding="utf-8").splitlines(keepends=True)
+            patched = _apply_unified_diff(original, diff_text)
+            target.write_text("".join(patched), encoding="utf-8")
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Patch failed: {exc}") from exc
+
+        # Hot-reload the module if it is already imported (behavior modules only)
+        module_name = _path_to_module(proposal["target_path"])
+        reloaded = False
+        if module_name and module_name in sys.modules:
+            try:
+                importlib.reload(sys.modules[module_name])
+                reloaded = True
+                logger.info("Hot-reloaded module: %s", module_name)
+            except Exception as exc:
+                logger.warning("Hot-reload failed for %s: %s", module_name, exc)
+
+        await db.mark_proposal_applied(proposal_id)
+        return JSONResponse({
+            "id": proposal_id,
+            "applied": True,
+            "reloaded": reloaded,
+            "module": module_name,
+            "target_path": proposal["target_path"],
+        })
 
     @_app.get("/v1/modules")
     async def list_modules() -> JSONResponse:

@@ -47,6 +47,7 @@ class MemoryDatabase:
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.execute("PRAGMA journal_mode = WAL")
         await self._apply_schema()
+        await self._migrate_proposals_columns()
         logger.info("Memory database connected: %s", self._path)
 
     async def close(self) -> None:
@@ -322,6 +323,41 @@ class MemoryDatabase:
             "UPDATE proposals SET reviewed_at = ? WHERE id = ?",
             (_now(), proposal_id),
         )
+        await self._db.commit()
+
+    async def save_proposal_analysis(
+        self, proposal_id: str, diff: str, ai_summary: str
+    ) -> None:
+        await self._db.execute(
+            "UPDATE proposals SET diff = ?, ai_summary = ?, status = 'ANALYZED' WHERE id = ?",
+            (diff, ai_summary, proposal_id),
+        )
+        await self._db.commit()
+
+    async def mark_proposal_applied(self, proposal_id: str) -> None:
+        await self._db.execute(
+            "UPDATE proposals SET status = 'APPLIED', applied_at = ? WHERE id = ?",
+            (_now(), proposal_id),
+        )
+        await self._db.commit()
+
+    async def get_proposal(self, proposal_id: str) -> dict | None:
+        async with self._db.execute(
+            "SELECT * FROM proposals WHERE id = ?", (proposal_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def _migrate_proposals_columns(self) -> None:
+        """Add columns introduced after initial schema creation."""
+        async with self._db.execute("PRAGMA table_info(proposals)") as cursor:
+            cols = {row["name"] for row in await cursor.fetchall()}
+        if "diff" not in cols:
+            await self._db.execute("ALTER TABLE proposals ADD COLUMN diff TEXT")
+        if "ai_summary" not in cols:
+            await self._db.execute("ALTER TABLE proposals ADD COLUMN ai_summary TEXT")
+        if "applied_at" not in cols:
+            await self._db.execute("ALTER TABLE proposals ADD COLUMN applied_at TEXT")
         await self._db.commit()
 
     # ── Questions ─────────────────────────────────────────────────────────────
