@@ -68,6 +68,19 @@ class DiscoveryRecorded(BaseEvent):
 
 
 @dataclass
+class ExperimentDesigned(BaseEvent):
+    experiment_id: str = ""
+    hypothesis: str = ""
+
+
+@dataclass
+class ExperimentCompleted(BaseEvent):
+    experiment_id: str = ""
+    conclusion: str = ""  # supports | refutes | inconclusive
+    confidence_delta: float = 0.0
+
+
+@dataclass
 class ProposalGenerated(BaseEvent):
     proposal_id: str = ""
     description: str = ""
