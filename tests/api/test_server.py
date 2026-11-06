@@ -184,5 +184,5 @@ async def test_context_injection_no_match_keeps_identity_only(db):
     system_msgs = [m for m in messages if m.role == "system"]
     # Identity prompt is always present
     assert len(system_msgs) == 1
-    assert "IA-test" in system_msgs[0].content
+    assert "RON" in system_msgs[0].content
     assert "Memory context" not in system_msgs[0].content
