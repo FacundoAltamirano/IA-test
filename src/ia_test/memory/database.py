@@ -286,6 +286,44 @@ class MemoryDatabase:
             for r in rows
         ]
 
+    # ── Proposals ─────────────────────────────────────────────────────────────
+
+    async def save_proposal(self, proposal) -> None:
+        await self._db.execute(
+            """
+            INSERT OR REPLACE INTO proposals
+                (id, target_path, description, rationale, suggested_changes,
+                 branch_name, status, created_at, reviewed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                proposal.id,
+                proposal.target_path,
+                proposal.description,
+                proposal.rationale,
+                proposal.suggested_changes,
+                proposal.branch_name,
+                proposal.status,
+                proposal.created_at,
+                None,
+            ),
+        )
+        await self._db.commit()
+
+    async def list_proposals(self) -> list[dict]:
+        async with self._db.execute(
+            "SELECT * FROM proposals ORDER BY created_at DESC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def mark_proposal_reviewed(self, proposal_id: str) -> None:
+        await self._db.execute(
+            "UPDATE proposals SET reviewed_at = ? WHERE id = ?",
+            (_now(), proposal_id),
+        )
+        await self._db.commit()
+
     # ── Audit ─────────────────────────────────────────────────────────────────
 
     async def _audit(self, operation: str, details: dict) -> None:

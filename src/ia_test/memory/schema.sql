@@ -30,6 +30,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
     timestamp TEXT NOT NULL
 );
 
+-- Self-modification proposals (human must approve before any code changes)
+CREATE TABLE IF NOT EXISTS proposals (
+    id               TEXT PRIMARY KEY,
+    target_path      TEXT NOT NULL,
+    description      TEXT NOT NULL,
+    rationale        TEXT NOT NULL,
+    suggested_changes TEXT NOT NULL,
+    branch_name      TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'PROPOSED',  -- only value the system sets
+    created_at       TEXT NOT NULL,
+    reviewed_at      TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_entries_type       ON memory_entries(type);
 CREATE INDEX IF NOT EXISTS idx_entries_confidence ON memory_entries(confidence);
 CREATE INDEX IF NOT EXISTS idx_relations_source   ON memory_relations(source_id);

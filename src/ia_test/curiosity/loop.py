@@ -6,8 +6,11 @@ The loop itself decides when to generate questions based on memory state.
 Safety: bounded by MAX_AUTONOMOUS_CYCLES from settings.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from ..core.event_bus import EventBus
 from ..core.events import ExplorationTriggered, QuestionGenerated
@@ -18,6 +21,9 @@ from ..safety.limits import RateLimiter, RateLimitExceeded
 from .generator import QuestionGenerator
 from .models import Question
 from .scorer import UncertaintyScorer
+
+if TYPE_CHECKING:
+    from ..exploration.engine import ExplorationEngine
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,7 @@ class CuriosityLoop:
         event_bus: EventBus,
         settings: Settings,
         rate_limiter: RateLimiter | None = None,
+        exploration_engine: ExplorationEngine | None = None,
     ) -> None:
         self._db = db
         self._scorer = UncertaintyScorer(db)
@@ -40,6 +47,7 @@ class CuriosityLoop:
             max_per_hour=settings.max_api_calls_per_hour,
             max_per_day=settings.max_api_calls_per_day,
         )
+        self._exploration_engine = exploration_engine
         self._cycles_run = 0
         self._running = False
         self._task: asyncio.Task | None = None
@@ -98,6 +106,7 @@ class CuriosityLoop:
             len(questions),
         )
 
+        discoveries_total = 0
         for question in questions:
             await self._event_bus.publish(
                 QuestionGenerated(
@@ -107,10 +116,39 @@ class CuriosityLoop:
                     trigger=question.trigger,
                 )
             )
-            if question.priority_score > 0.5:
-                await self._event_bus.publish(
-                    ExplorationTriggered(question_id=question.id)
-                )
+
+            if self._exploration_engine is not None:
+                # Each exploration call is a real provider call — count it against limits
+                try:
+                    await self._rate_limiter.check_and_record()
+                except RateLimitExceeded as exc:
+                    logger.warning("Rate limit hit during exploration — stopping cycle early: %s", exc)
+                    break
+
+                await self._event_bus.publish(ExplorationTriggered(question_id=question.id))
+                try:
+                    result = await self._exploration_engine.explore(question)
+                    discoveries_total += len(result.discoveries)
+                    logger.info(
+                        "Explored question %s — status=%s, discoveries=%d",
+                        question.id[:8],
+                        result.status,
+                        len(result.discoveries),
+                    )
+                except Exception as exc:
+                    logger.error("Exploration error for question %s: %s", question.id[:8], exc)
+            else:
+                # No engine wired — publish the trigger so external subscribers can handle it
+                if question.priority_score > 0.5:
+                    await self._event_bus.publish(ExplorationTriggered(question_id=question.id))
+
+        if discoveries_total:
+            logger.info(
+                "Cycle %d complete — %d questions, %d discoveries added to memory",
+                self._cycles_run,
+                len(questions),
+                discoveries_total,
+            )
 
         return questions
 

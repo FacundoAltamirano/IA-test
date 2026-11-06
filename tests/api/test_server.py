@@ -168,8 +168,8 @@ async def test_context_injection_adds_memory_to_system(db):
     assert "Python" in system_msgs[0].content
 
 
-async def test_context_injection_no_match_gives_empty_system(db):
-    """When memory has nothing relevant, system prompt stays None/empty."""
+async def test_context_injection_no_match_keeps_identity_only(db):
+    """When memory has nothing relevant, system prompt contains identity but no memory block."""
     provider = _make_provider()
     app = create_app(provider=provider, db=db)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -182,5 +182,7 @@ async def test_context_injection_no_match_gives_empty_system(db):
     call_args = provider.complete.call_args
     messages = call_args[0][0]
     system_msgs = [m for m in messages if m.role == "system"]
-    # No matching memory + no system in request → no system message
-    assert len(system_msgs) == 0
+    # Identity prompt is always present
+    assert len(system_msgs) == 1
+    assert "IA-test" in system_msgs[0].content
+    assert "Memory context" not in system_msgs[0].content
