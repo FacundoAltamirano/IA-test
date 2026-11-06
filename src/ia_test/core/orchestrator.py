@@ -4,6 +4,7 @@ from .event_bus import EventBus
 from .events import SystemStarted, SystemStopped
 from .settings import Settings
 from ..providers.base import ModelProvider
+from ..memory.database import MemoryDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -11,9 +12,15 @@ logger = logging.getLogger(__name__)
 class Core:
     """Central orchestrator. Owns the event bus and wires all components."""
 
-    def __init__(self, settings: Settings, provider: ModelProvider) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        provider: ModelProvider,
+        memory: MemoryDatabase | None = None,
+    ) -> None:
         self.settings = settings
         self.provider = provider
+        self.memory = memory or MemoryDatabase(settings.memory_db_path)
         self.event_bus = EventBus()
         self._running = False
 
@@ -26,6 +33,7 @@ class Core:
 
     async def start(self) -> None:
         self._running = True
+        await self.memory.connect()
         logger.info(
             "Core started — provider: %s, model: %s",
             self.settings.model_provider,
@@ -36,6 +44,7 @@ class Core:
     async def stop(self) -> None:
         self._running = False
         await self.event_bus.publish(SystemStopped())
+        await self.memory.close()
         logger.info("Core stopped")
 
     @property
