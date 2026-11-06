@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
@@ -51,7 +52,13 @@ def create_app(
     db: MemoryDatabase,
     rate_limiter: RateLimiter | None = None,
 ) -> FastAPI:
-    _app = FastAPI(title="IA-test Local API", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        await db.connect()
+        yield
+        await db.close()
+
+    _app = FastAPI(title="IA-test Local API", version="0.1.0", lifespan=lifespan)
     injector = ContextInjector(db)
 
     # ── helpers ───────────────────────────────────────────────────────────
@@ -167,7 +174,6 @@ def create_app(
 # so pytest collection is unaffected.
 
 def app_factory() -> FastAPI:
-    import asyncio
     import pathlib
     from ia_test.core.settings import Settings
 
@@ -176,8 +182,8 @@ def app_factory() -> FastAPI:
 
     pathlib.Path(settings.memory_db_path).parent.mkdir(parents=True, exist_ok=True)
     db = MemoryDatabase(settings.memory_db_path)
-
-    asyncio.run(db.connect())
+    # DB connection happens in the lifespan handler inside create_app,
+    # so no asyncio.run() needed here.
 
     rate_limiter = RateLimiter(
         max_per_hour=settings.max_api_calls_per_hour,
