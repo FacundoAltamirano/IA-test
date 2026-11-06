@@ -318,6 +318,37 @@ class MemoryDatabase:
             rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
+    async def delete_entry(self, entry_id: str) -> bool:
+        async with self._db.execute(
+            "SELECT id FROM memory_entries WHERE id = ?", (entry_id,)
+        ) as cur:
+            if not await cur.fetchone():
+                return False
+        await self._db.execute(
+            "DELETE FROM memory_relations WHERE source_id = ? OR target_id = ?",
+            (entry_id, entry_id),
+        )
+        await self._db.execute("DELETE FROM memory_entries WHERE id = ?", (entry_id,))
+        await self._db.commit()
+        await self._audit("delete_entry", {"entry_id": entry_id})
+        return True
+
+    async def update_entry(
+        self, entry_id: str, content: str | None = None, confidence: float | None = None
+    ) -> MemoryEntry | None:
+        entry = await self.get(entry_id)
+        if entry is None:
+            return None
+        new_content = content if content is not None else entry.content
+        new_conf = max(0.0, min(1.0, confidence)) if confidence is not None else entry.confidence
+        await self._db.execute(
+            "UPDATE memory_entries SET content = ?, confidence = ?, updated_at = ? WHERE id = ?",
+            (new_content, new_conf, _now(), entry_id),
+        )
+        await self._db.commit()
+        await self._audit("update_entry", {"entry_id": entry_id})
+        return await self.get(entry_id)
+
     async def mark_proposal_reviewed(self, proposal_id: str) -> None:
         await self._db.execute(
             "UPDATE proposals SET reviewed_at = ? WHERE id = ?",

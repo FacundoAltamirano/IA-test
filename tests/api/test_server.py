@@ -1,10 +1,15 @@
 from __future__ import annotations
 import json
+import re
+import shutil
+import subprocess
+import tempfile
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from httpx import AsyncClient, ASGITransport
+from pathlib import Path
 
-from ia_test.api.server import create_app
+from ia_test.api.server import create_app, _CHAT_HTML
 from ia_test.memory.database import MemoryDatabase
 from ia_test.providers.base import Response, Usage
 
@@ -186,3 +191,41 @@ async def test_context_injection_no_match_keeps_identity_only(db):
     assert len(system_msgs) == 1
     assert "RON" in system_msgs[0].content
     assert "Memory context" not in system_msgs[0].content
+
+
+# ── JS syntax validation ──────────────────────────────────────────────────
+
+def test_embedded_js_has_no_syntax_errors():
+    """Guard against literal \\n inside Python triple-quoted strings breaking JS.
+
+    When server.py embeds JS inside _CHAT_HTML (a triple-quoted string), Python
+    escape sequences like \\n are interpreted at the Python level, so the served
+    HTML contains a literal newline instead of the two-character sequence \\n.
+    A regex /\\n/g or split('\\n') becomes a parse error in the browser.
+    This test catches that class of bug before it reaches production.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not found in PATH")
+
+    scripts = list(re.finditer(r"<script[^>]*>(.*?)</script>", _CHAT_HTML, re.DOTALL))
+    assert scripts, "No <script> blocks found in _CHAT_HTML"
+
+    for i, match in enumerate(scripts):
+        content = match.group(1)
+        if not content.strip():
+            continue
+        with tempfile.NamedTemporaryFile(suffix=".js", mode="w", encoding="utf-8", delete=False) as f:
+            f.write(content)
+            tmp = f.name
+        try:
+            result = subprocess.run(
+                [node, "--check", tmp],
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, (
+                f"Script block {i + 1} has a syntax error:\n{result.stderr}"
+            )
+        finally:
+            Path(tmp).unlink(missing_ok=True)

@@ -307,9 +307,8 @@ _CHAT_HTML = """<!doctype html>
       <div class="avatar">🤖</div>
       <div>
         <div class="bubble">
-          Hola — soy IA-test, un sistema experimental con memoria persistente.
-          Todo lo que hablemos va quedando en mi grafo de conocimiento.
-          ¿En qué pensamos hoy?
+          Hola. Soy RON — no sé muy bien qué soy, pero tengo memoria y algo parecido a curiosidad.
+          ¿De qué hablamos?
         </div>
         <div class="meta">IA-test · ahora</div>
       </div>
@@ -330,8 +329,8 @@ _CHAT_HTML = """<!doctype html>
   <div id="proposals-list"></div>
 </div>
 
-<div id="graph-panel" class="panel" style="position:relative">
-  <div id="graph-controls" style="position:absolute;top:12px;right:12px;z-index:10;display:flex;gap:8px;align-items:center">
+<div id="graph-panel" class="panel" style="position:relative;display:flex;overflow:hidden">
+  <div id="graph-controls" style="position:absolute;top:12px;left:12px;z-index:10;display:flex;gap:8px;align-items:center">
     <div style="display:flex;gap:10px;align-items:center;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:6px 12px;font-size:.75rem">
       <span style="color:#7c6af7">●</span> knowledge
       <span style="color:#f7a76a">●</span> hypothesis
@@ -340,8 +339,33 @@ _CHAT_HTML = """<!doctype html>
     </div>
     <button onclick="loadGraph()" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#a78bfa;padding:6px 12px;cursor:pointer;font-size:.75rem">↻ Actualizar</button>
   </div>
-  <div id="cy" style="flex:1;width:100%;height:100%"></div>
+  <div id="cy" style="flex:1;min-width:0;height:100%"></div>
   <div id="graph-tooltip" style="display:none;position:fixed;background:#1a1a1a;border:1px solid #444;border-radius:8px;padding:10px 14px;max-width:300px;font-size:.82rem;line-height:1.6;color:#e8e8e8;z-index:999;pointer-events:none;box-shadow:0 4px 20px rgba(0,0,0,.5)"></div>
+  <div id="mem-detail" style="display:none;width:340px;min-width:340px;border-left:1px solid #222;background:#111;overflow-y:auto;flex-direction:column;padding:0">
+    <div style="padding:14px 16px;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;justify-content:space-between">
+      <span id="md-badge" style="font-size:.72rem;padding:3px 10px;border-radius:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em"></span>
+      <button onclick="closeMemDetail()" style="background:none;border:none;color:#666;cursor:pointer;font-size:1.1rem;line-height:1">✕</button>
+    </div>
+    <div style="padding:16px">
+      <div style="font-size:.72rem;color:#555;margin-bottom:12px">
+        <span id="md-prov"></span> &nbsp;·&nbsp; <span id="md-conf"></span>% confianza
+      </div>
+      <div id="md-tags" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px"></div>
+      <div id="md-content-view" style="font-size:.84rem;line-height:1.65;color:#ccc;white-space:pre-wrap;word-break:break-word"></div>
+      <textarea id="md-content-edit" rows="8" style="display:none;width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#e8e8e8;font-size:.84rem;line-height:1.6;padding:10px;resize:vertical;font-family:inherit"></textarea>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px" id="md-conf-row" style="display:none">
+        <label style="font-size:.75rem;color:#666">Confianza</label>
+        <input id="md-conf-edit" type="range" min="0" max="100" style="flex:1">
+        <span id="md-conf-val" style="font-size:.75rem;color:#a78bfa;width:30px;text-align:right"></span>
+      </div>
+      <div id="md-created" style="margin-top:14px;font-size:.7rem;color:#444"></div>
+    </div>
+    <div style="padding:12px 16px;border-top:1px solid #1e1e1e;display:flex;gap:8px;margin-top:auto">
+      <button id="md-btn-edit" onclick="toggleMemEdit()" style="flex:1;padding:8px;background:#1a1a2a;border:1px solid #333;border-radius:8px;color:#a78bfa;cursor:pointer;font-size:.8rem">Editar</button>
+      <button id="md-btn-save" onclick="saveMemEdit()" style="display:none;flex:1;padding:8px;background:#1a2a1a;border:1px solid #2a4a2a;border-radius:8px;color:#4ade80;cursor:pointer;font-size:.8rem">Guardar</button>
+      <button onclick="deleteMemEntry()" style="flex:1;padding:8px;background:#2a1a1a;border:1px solid #4a2a2a;border-radius:8px;color:#f87171;cursor:pointer;font-size:.8rem">Eliminar</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -460,12 +484,14 @@ const voiceBtn = document.getElementById('voice-btn');
 let voiceMode = false;
 let currentAudio = null;
 
-voiceBtn.addEventListener('click', () => {
-  voiceMode = !voiceMode;
-  voiceBtn.classList.toggle('active', voiceMode);
-  voiceBtn.textContent = voiceMode ? '🔊' : '🔇';
-  voiceBtn.title = voiceMode ? 'Modo voz activo (click para desactivar)' : 'Modo voz';
-});
+if (voiceBtn) {
+  voiceBtn.addEventListener('click', () => {
+    voiceMode = !voiceMode;
+    voiceBtn.classList.toggle('active', voiceMode);
+    voiceBtn.textContent = voiceMode ? '🔊' : '🔇';
+    voiceBtn.title = voiceMode ? 'Modo voz activo (click para desactivar)' : 'Modo voz';
+  });
+}
 
 async function callVoice(messages) {
   const lastUserMsg = messages.filter(m => m.role === 'user').at(-1)?.content ?? '';
@@ -537,7 +563,7 @@ async function loadModules() {
 
 function renderDiff(diff) {
   if (!diff || !diff.trim()) return '<div style="color:var(--muted);font-size:.8rem;padding:8px">Sin cambios concretos generados.</div>';
-  const lines = diff.split('\n');
+  const lines = diff.split('\\n');
   const rows = lines.map(l => {
     if (l.startsWith('+') && !l.startsWith('+++')) return `<div class="diff-line add">${escHtml(l)}</div>`;
     if (l.startsWith('-') && !l.startsWith('---')) return `<div class="diff-line del">${escHtml(l)}</div>`;
@@ -758,10 +784,9 @@ async function loadGraph() {
     const d = e.target.data();
     e.target.addClass('hovered');
     const conf = (d.confidence * 100).toFixed(0);
-    const prov = d.provenance || '';
     tooltip.innerHTML =
       `<div style="color:var(--accent2);font-weight:600;margin-bottom:4px">${d.type} · ${conf}% confianza</div>` +
-      `<div style="color:#aaa;font-size:.72rem;margin-bottom:6px">${prov}</div>` +
+      `<div style="color:#aaa;font-size:.72rem;margin-bottom:6px">${d.provenance || ''}</div>` +
       `<div>${d.label}</div>`;
     tooltip.style.display = 'block';
   });
@@ -773,6 +798,131 @@ async function loadGraph() {
     e.target.removeClass('hovered');
     tooltip.style.display = 'none';
   });
+  cy.on('tap', 'node', (e) => {
+    tooltip.style.display = 'none';
+    openMemDetail(e.target.data('id'));
+  });
+  cy.on('tap', (e) => {
+    if (e.target === cy) closeMemDetail();
+  });
+}
+
+// ── memory detail panel ───────────────────────────────────────────────────
+const BADGE_COLORS = {
+  knowledge:  { bg: '#1a1535', color: '#a78bfa', border: '#3d2f8a' },
+  hypothesis: { bg: '#2a1f0a', color: '#f7a76a', border: '#7a4f1a' },
+  experience: { bg: '#0a2a1a', color: '#6af7b8', border: '#1a7a4a' },
+  error:      { bg: '#2a0a0a', color: '#f76a6a', border: '#7a1a1a' },
+  experiment: { bg: '#0a1a2a', color: '#6ab8f7', border: '#1a4a7a' },
+};
+
+let _currentMemId = null;
+let _editMode = false;
+
+async function openMemDetail(id) {
+  _currentMemId = id;
+  _editMode = false;
+  const panel = document.getElementById('mem-detail');
+  panel.style.display = 'flex';
+  panel.style.flexDirection = 'column';
+
+  // Reset edit state
+  document.getElementById('md-content-view').style.display = '';
+  document.getElementById('md-content-edit').style.display = 'none';
+  document.getElementById('md-conf-row').style.display = 'none';
+  document.getElementById('md-btn-edit').style.display = '';
+  document.getElementById('md-btn-save').style.display = 'none';
+
+  try {
+    const r = await fetch(`/v1/memory/${id}`);
+    if (!r.ok) { closeMemDetail(); return; }
+    const d = await r.json();
+
+    const bc = BADGE_COLORS[d.type] || { bg:'#1a1a1a', color:'#888', border:'#333' };
+    const badge = document.getElementById('md-badge');
+    badge.textContent = d.type;
+    badge.style.background = bc.bg;
+    badge.style.color = bc.color;
+    badge.style.border = `1px solid ${bc.border}`;
+
+    document.getElementById('md-prov').textContent = d.provenance || '';
+    document.getElementById('md-conf').textContent = (d.confidence * 100).toFixed(0);
+
+    const tagsEl = document.getElementById('md-tags');
+    tagsEl.innerHTML = (d.tags || []).map(t =>
+      `<span style="font-size:.7rem;padding:2px 8px;background:#1e1e2e;border:1px solid #2e2e4e;border-radius:10px;color:#888">${t}</span>`
+    ).join('');
+
+    document.getElementById('md-content-view').textContent = d.content;
+    document.getElementById('md-content-edit').value = d.content;
+
+    const confEdit = document.getElementById('md-conf-edit');
+    confEdit.value = Math.round(d.confidence * 100);
+    document.getElementById('md-conf-val').textContent = confEdit.value + '%';
+    confEdit.oninput = () => {
+      document.getElementById('md-conf-val').textContent = confEdit.value + '%';
+    };
+
+    const created = d.created_at ? new Date(d.created_at).toLocaleString('es-AR') : '';
+    document.getElementById('md-created').textContent = created ? `Creado: ${created}` : '';
+  } catch(err) {
+    closeMemDetail();
+  }
+}
+
+function closeMemDetail() {
+  document.getElementById('mem-detail').style.display = 'none';
+  _currentMemId = null;
+  if (cy) cy.$(':selected').unselect();
+}
+
+function toggleMemEdit() {
+  _editMode = !_editMode;
+  document.getElementById('md-content-view').style.display = _editMode ? 'none' : '';
+  document.getElementById('md-content-edit').style.display = _editMode ? '' : 'none';
+  document.getElementById('md-conf-row').style.display = _editMode ? 'flex' : 'none';
+  document.getElementById('md-btn-edit').style.display = _editMode ? 'none' : '';
+  document.getElementById('md-btn-save').style.display = _editMode ? '' : 'none';
+  if (_editMode) document.getElementById('md-content-edit').focus();
+}
+
+async function saveMemEdit() {
+  if (!_currentMemId) return;
+  const content = document.getElementById('md-content-edit').value.trim();
+  const confidence = parseInt(document.getElementById('md-conf-edit').value) / 100;
+  if (!content) return;
+
+  const r = await fetch(`/v1/memory/${_currentMemId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, confidence }),
+  });
+  if (!r.ok) return;
+
+  document.getElementById('md-content-view').textContent = content;
+  document.getElementById('md-conf').textContent = Math.round(confidence * 100);
+
+  if (cy) {
+    const node = cy.$(`#${_currentMemId}`);
+    if (node.length) {
+      node.data('label', content.substring(0, 60).replace(/\\n/g, ' '));
+      node.data('confidence', confidence);
+      node.style('width', 18 + confidence * 28);
+      node.style('height', 18 + confidence * 28);
+    }
+  }
+  toggleMemEdit();
+}
+
+async function deleteMemEntry() {
+  if (!_currentMemId) return;
+  if (!confirm('¿Eliminar esta memoria?')) return;
+  const r = await fetch(`/v1/memory/${_currentMemId}`, { method: 'DELETE' });
+  if (!r.ok) return;
+  if (cy) cy.$(`#${_currentMemId}`).remove();
+  closeMemDetail();
+  const countEl = document.getElementById('mem-count');
+  if (countEl) countEl.textContent = Math.max(0, parseInt(countEl.textContent || '0') - 1);
 }
 
 // load graph when switching to that tab
@@ -993,6 +1143,39 @@ def create_app(
                         })
 
         return JSONResponse({"nodes": nodes, "edges": edges})
+
+    @_app.get("/v1/memory/{entry_id}")
+    async def get_memory_entry(entry_id: str) -> JSONResponse:
+        entry = await db.get(entry_id)
+        if entry is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse({
+            "id": entry.id,
+            "type": entry.type,
+            "content": entry.content,
+            "confidence": entry.confidence,
+            "provenance": entry.provenance,
+            "tags": entry.tags,
+            "created_at": entry.created_at,
+            "updated_at": entry.updated_at,
+        })
+
+    @_app.patch("/v1/memory/{entry_id}")
+    async def update_memory_entry(entry_id: str, request: Request) -> JSONResponse:
+        body = await request.json()
+        content = body.get("content")
+        confidence = body.get("confidence")
+        entry = await db.update_entry(entry_id, content=content, confidence=confidence)
+        if entry is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse({"ok": True, "id": entry.id})
+
+    @_app.delete("/v1/memory/{entry_id}")
+    async def delete_memory_entry(entry_id: str) -> JSONResponse:
+        deleted = await db.delete_entry(entry_id)
+        if not deleted:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse({"ok": True})
 
     @_app.get("/v1/proposals")
     async def list_proposals() -> JSONResponse:
