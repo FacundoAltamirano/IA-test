@@ -324,6 +324,50 @@ class MemoryDatabase:
         )
         await self._db.commit()
 
+    # ── Questions ─────────────────────────────────────────────────────────────
+
+    async def store_question(
+        self,
+        question_id: str,
+        content: str,
+        priority_score: float,
+        trigger: str,
+        source_entry_id: str | None = None,
+    ) -> None:
+        now = _now()
+        await self._db.execute(
+            """
+            INSERT OR IGNORE INTO questions
+                (id, content, priority_score, trigger, source_entry_id,
+                 status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+            """,
+            (question_id, content, priority_score, trigger, source_entry_id, now, now),
+        )
+        await self._db.commit()
+
+    async def get_pending_questions(self, limit: int = 10) -> list[dict]:
+        async with self._db.execute(
+            """
+            SELECT id, content, priority_score, trigger, source_entry_id,
+                   status, created_at, updated_at
+            FROM questions
+            WHERE status = 'pending'
+            ORDER BY priority_score DESC, created_at ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def update_question_status(self, question_id: str, status: str) -> None:
+        await self._db.execute(
+            "UPDATE questions SET status = ?, updated_at = ? WHERE id = ?",
+            (status, _now(), question_id),
+        )
+        await self._db.commit()
+
     # ── Audit ─────────────────────────────────────────────────────────────────
 
     async def _audit(self, operation: str, details: dict) -> None:

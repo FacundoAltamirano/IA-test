@@ -85,25 +85,51 @@ class CuriosityLoop:
             logger.warning("Curiosity loop rate-limited: %s", exc)
             return []
 
-        report = await self._scorer.compute(
-            limit=self._settings.curiosity_questions_per_cycle * 3
-        )
+        quota = self._settings.curiosity_questions_per_cycle
 
-        if report.total_entries == 0:
+        # 1. Resume pending questions from previous cycles
+        pending_rows = await self._db.get_pending_questions(limit=quota)
+        questions: list[Question] = [
+            Question(
+                id=r["id"],
+                content=r["content"],
+                priority_score=r["priority_score"],
+                trigger=r["trigger"],  # type: ignore[arg-type]
+                source_entry_id=r["source_entry_id"],
+                status="pending",
+                created_at=r["created_at"],
+            )
+            for r in pending_rows
+        ]
+
+        # 2. Fill remaining quota with freshly generated questions
+        still_needed = quota - len(questions)
+        if still_needed > 0:
+            report = await self._scorer.compute(limit=still_needed * 3)
+            if report.total_entries > 0:
+                new_questions = await self._generator.generate(report, max_questions=still_needed)
+                for q in new_questions:
+                    await self._db.store_question(
+                        question_id=q.id,
+                        content=q.content,
+                        priority_score=q.priority_score,
+                        trigger=q.trigger,
+                        source_entry_id=q.source_entry_id,
+                    )
+                questions.extend(new_questions)
+
+        if not questions:
             logger.debug("Memory empty — no questions to generate yet")
             self._cycles_run += 1
             return []
 
-        questions = await self._generator.generate(
-            report, max_questions=self._settings.curiosity_questions_per_cycle
-        )
-
         self._cycles_run += 1
         logger.info(
-            "Curiosity cycle %d — uncertainty=%.3f, questions=%d",
+            "Curiosity cycle %d — %d questions (%d resumed, %d new)",
             self._cycles_run,
-            report.overall_uncertainty,
             len(questions),
+            len(pending_rows),
+            len(questions) - len(pending_rows),
         )
 
         discoveries_total = 0
@@ -129,6 +155,8 @@ class CuriosityLoop:
                 try:
                     result = await self._exploration_engine.explore(question)
                     discoveries_total += len(result.discoveries)
+                    new_status = "answered" if result.status == "completed" else "failed"
+                    await self._db.update_question_status(question.id, new_status)
                     logger.info(
                         "Explored question %s — status=%s, discoveries=%d",
                         question.id[:8],
@@ -137,6 +165,7 @@ class CuriosityLoop:
                     )
                 except Exception as exc:
                     logger.error("Exploration error for question %s: %s", question.id[:8], exc)
+                    await self._db.update_question_status(question.id, "failed")
             else:
                 # No engine wired — publish the trigger so external subscribers can handle it
                 if question.priority_score > 0.5:

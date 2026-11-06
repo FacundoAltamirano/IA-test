@@ -228,6 +228,66 @@ async def test_no_exploration_without_engine(db):
     assert after == before
 
 
+# ── question persistence ──────────────────────────────────────────────────
+
+async def test_generated_questions_are_persisted_in_db(db):
+    """Questions generated in a cycle are stored as 'pending' in the DB."""
+    await db.store(type="knowledge", content="Isolated concept needs investigation", confidence=0.5)
+
+    bus = EventBus()
+    loop = CuriosityLoop(
+        db=db, provider=_make_provider("What connects these?"),
+        event_bus=bus, settings=_make_settings(curiosity_questions_per_cycle=1),
+    )
+    await loop.run_once()
+
+    pending = await db.get_pending_questions(limit=10)
+    assert len(pending) >= 1
+    assert all(q["status"] == "pending" for q in pending)
+
+
+async def test_explored_questions_are_marked_answered(db):
+    """After successful exploration, the question status is updated to 'answered'."""
+    await db.store(type="knowledge", content="Isolated fact about Python language", confidence=0.4)
+
+    bus = EventBus()
+    provider = _make_exploration_provider("What is Python language?")
+    settings = _make_settings(curiosity_questions_per_cycle=1)
+
+    engine = ExplorationEngine(db=db, provider=provider, event_bus=bus, settings=settings)
+    loop = CuriosityLoop(
+        db=db, provider=provider,
+        event_bus=bus, settings=settings,
+        exploration_engine=engine,
+    )
+    await loop.run_once()
+
+    # No pending questions should remain — all were explored
+    pending = await db.get_pending_questions(limit=10)
+    assert len(pending) == 0
+
+
+async def test_pending_questions_are_resumed_in_next_cycle(db):
+    """Questions stored as pending in cycle N are picked up in cycle N+1."""
+    await db.store(type="knowledge", content="Isolated concept A", confidence=0.5)
+
+    bus = EventBus()
+    # No exploration engine — questions stay pending after cycle 1
+    loop = CuriosityLoop(
+        db=db, provider=_make_provider("Why does A happen?"),
+        event_bus=bus, settings=_make_settings(curiosity_questions_per_cycle=1),
+    )
+
+    questions_cycle1 = await loop.run_once()
+    assert len(questions_cycle1) >= 1
+    q_id = questions_cycle1[0].id
+
+    # Cycle 2: same question is resumed from DB (no new data, same entry in memory)
+    questions_cycle2 = await loop.run_once()
+    resumed_ids = {q.id for q in questions_cycle2}
+    assert q_id in resumed_ids
+
+
 async def test_rate_limit_stops_exploration_mid_cycle(db):
     """If rate limit is hit during exploration, the cycle stops without crashing."""
     await db.store(type="knowledge", content="Entry one isolated", confidence=0.4)

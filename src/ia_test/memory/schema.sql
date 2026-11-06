@@ -43,7 +43,22 @@ CREATE TABLE IF NOT EXISTS proposals (
     reviewed_at      TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_entries_type       ON memory_entries(type);
+-- Autonomous questions — survive between CuriosityLoop cycles
+CREATE TABLE IF NOT EXISTS questions (
+    id               TEXT PRIMARY KEY,
+    content          TEXT NOT NULL,
+    priority_score   REAL NOT NULL DEFAULT 0.5,
+    trigger          TEXT NOT NULL DEFAULT 'isolation',
+    source_entry_id  TEXT,
+    status           TEXT NOT NULL DEFAULT 'pending'
+                         CHECK (status IN ('pending', 'answered', 'failed')),
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_questions_status     ON questions(status);
+CREATE INDEX IF NOT EXISTS idx_questions_priority   ON questions(priority_score DESC);
+CREATE INDEX IF NOT EXISTS idx_entries_type         ON memory_entries(type);
 CREATE INDEX IF NOT EXISTS idx_entries_confidence ON memory_entries(confidence);
 CREATE INDEX IF NOT EXISTS idx_relations_source   ON memory_relations(source_id);
 CREATE INDEX IF NOT EXISTS idx_relations_target   ON memory_relations(target_id);

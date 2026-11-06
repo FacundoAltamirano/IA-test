@@ -32,7 +32,7 @@ style templates stored in memory. Supports pauses, pitch, rate, and sarcasm/laug
 
 T1 [S1, S2] inline — Active memory + context injection — DONE — commit 805d5dd
 T2 [S3] inline — Knowledge graph connectivity fix (limit 20→200 + derived_from) — DONE — commit pending
-T3 [S4] inline — Question persistence in SQLite — PENDING
+T3 [S4] inline — Question persistence in SQLite — DONE — commit pending
 T4 [S5] inline — SSML voice engine with self-modification — PENDING
 
 ## Log
