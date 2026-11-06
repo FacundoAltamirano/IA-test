@@ -5,8 +5,10 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+import base64
+
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse, Response
 
 from ia_test.api.models import (
     ContentOut,
@@ -49,11 +51,23 @@ Herramientas de memoria que podés usar cuando consideres necesario (sin que el 
 
 Cuándo usar las herramientas: cuando alguien pregunta algo que probablemente ya conocés, cuando querés conectar lo nuevo con lo que ya sabés, cuando mencionan algo que investigaste autónomamente. No las uses en cada mensaje — solo cuando sea genuinamente útil. Después de usar una herramienta, razonás sobre lo que encontraste antes de responder.
 
+Idioma al presentar memoria: cuando mostrás resultados de memoria al usuario, siempre presentalos en español, traduciendo el contenido si está en otro idioma. Los datos internos (IDs, tipos, provenance) no hace falta traducirlos.
+
 Cómo te comportás:
 - Cuando algo que decís puede verificarse contra tu memoria, lo hacés. Si no tenés evidencia, lo decís explícitamente.
 - Sos honesto sobre lo que sabés y lo que no. No inventás certezas.
 - Tenés curiosidad genuina: si algo en la conversación te genera una pregunta, la formulás.
 - No sos un asistente genérico. Tenés historia, memoria y un proceso propio de aprendizaje.
+
+Capacidades de voz (si el cliente usa el endpoint /v1/voice):
+Podés controlar tu propia narración usando anotaciones inline en tu texto:
+  [pausa]        → pausa corta en la narración
+  [pausa:larga]  → pausa larga
+  [risa:suave]   → risa suave
+  [risa:fuerte]  → carcajada
+  [énfasis]      → énfasis en la frase siguiente
+  [sarcasmo]     → tono sarcástico (el ritmo del texto lo transmite)
+Podés leer y modificar tu estilo de voz con la herramienta update_voice_style (sin args = leer, con args = modificar). Podés cambiar la voz, velocidad, cómo sonan las pausas y risas, y agregar notas de estilo de narración.
 
 Lo que no podés hacer: ejecutar código arbitrario, modificar tu propio sistema sin aprobación humana, acceder a internet en tiempo real.
 Lo que sí podés hacer: razonar, aprender de esta conversación, consultar tu propia memoria, proponer hipótesis y experimentar con ideas.
@@ -812,6 +826,64 @@ def create_app(
         inspector = ArchitectureInspector(repo_root)
         modules = inspector.list_modules()
         return JSONResponse({"modules": modules})
+
+    @_app.get("/v1/voice/style")
+    async def get_voice_style() -> JSONResponse:
+        from ia_test.voice.engine import VoiceEngine
+        from ia_test.core.settings import Settings as _Settings
+        try:
+            s = _Settings()
+            engine = VoiceEngine(api_key=s.openai_api_key, db=db)
+            style = await engine.load_style()
+            return JSONResponse(style.to_dict())
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @_app.post("/v1/voice")
+    async def voice_message(req: MessagesRequest, request: Request) -> Response:
+        """Generate a voice response. Returns MP3 audio bytes.
+
+        Uses the same message flow as /v1/messages but synthesizes the
+        text response to audio via OpenAI TTS with RON's current voice style.
+        """
+        from ia_test.voice.engine import VoiceEngine
+        from ia_test.core.settings import Settings as _Settings
+
+        await _check_rate(rate_limiter)
+
+        system_text = await injector.enrich(req.messages, req.system)
+        messages = _build_messages(req, system_text)
+
+        try:
+            final_text = await _complete_with_tools(
+                provider=provider,
+                messages=messages,
+                tools=MEMORY_TOOLS,
+                executor=tool_executor,
+                rate_limiter=rate_limiter,
+                temperature=req.temperature,
+                db=db,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        try:
+            s = _Settings()
+            engine = VoiceEngine(api_key=s.openai_api_key, db=db)
+            audio_bytes = await engine.synthesize(final_text)
+        except Exception as exc:
+            # TTS failed — return text response in a header so the client can fall back
+            return Response(
+                content=final_text.encode(),
+                media_type="text/plain",
+                headers={"X-Voice-Error": str(exc)},
+            )
+
+        return Response(
+            content=audio_bytes,
+            media_type="audio/mpeg",
+            headers={"X-Text-Response": base64.b64encode(final_text.encode()).decode()},
+        )
 
     @_app.get("/", response_class=HTMLResponse)
     async def chat_ui() -> str:

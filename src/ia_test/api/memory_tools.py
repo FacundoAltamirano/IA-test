@@ -9,10 +9,63 @@ import logging
 
 from ia_test.memory.database import MemoryDatabase
 from ia_test.providers.base import Tool, ToolCall, ToolResult
+from ia_test.voice.models import VoiceStyle
 
 logger = logging.getLogger(__name__)
 
+_VOICE_STYLE_TAG = "voice:style"
+_VALID_VOICES = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
+
 MEMORY_TOOLS: list[Tool] = [
+    Tool(
+        name="update_voice_style",
+        description=(
+            "Read or update your own voice narration style. "
+            "Call with no arguments to read current style. "
+            "Call with any subset of the fields to update them. "
+            "Changes take effect on the next audio synthesis request. "
+            "Available voices: alloy, echo, fable, onyx, nova, shimmer. "
+            "speed is a float from 0.25 to 4.0 (1.0 = normal). "
+            "pause_marker and long_pause_marker control how [pausa] and [pausa:larga] render. "
+            "laugh_soft and laugh_loud control how [risa:suave] and [risa:fuerte] render. "
+            "style_notes is free text guidance about your narration character."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "voice": {
+                    "type": "string",
+                    "description": "OpenAI TTS voice name",
+                    "enum": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
+                },
+                "speed": {
+                    "type": "number",
+                    "description": "Narration speed, 0.25 to 4.0",
+                },
+                "pause_marker": {
+                    "type": "string",
+                    "description": "Text substituted for [pausa] annotation",
+                },
+                "long_pause_marker": {
+                    "type": "string",
+                    "description": "Text substituted for [pausa:larga] annotation",
+                },
+                "laugh_soft": {
+                    "type": "string",
+                    "description": "Text substituted for [risa:suave] annotation",
+                },
+                "laugh_loud": {
+                    "type": "string",
+                    "description": "Text substituted for [risa:fuerte] annotation",
+                },
+                "style_notes": {
+                    "type": "string",
+                    "description": "Free-form narration character description",
+                },
+            },
+            "required": [],
+        },
+    ),
     Tool(
         name="search_memory",
         description=(
@@ -105,6 +158,8 @@ class MemoryToolExecutor:
         logger.info("Tool call: %s args=%s", call.name, call.arguments)
         try:
             match call.name:
+                case "update_voice_style":
+                    result = await self._update_voice_style(call.arguments)
                 case "search_memory":
                     result = await self._search_memory(call.arguments)
                 case "get_memory":
@@ -124,6 +179,79 @@ class MemoryToolExecutor:
             name=call.name,
             content=json.dumps(result, ensure_ascii=False),
         )
+
+    async def _update_voice_style(self, args: dict) -> dict:
+        # Load current style from memory
+        all_entries = await self._db.query(limit=500)
+        existing_entry = None
+        current_style = VoiceStyle()
+
+        for entry in all_entries:
+            if _VOICE_STYLE_TAG in entry.tags:
+                existing_entry = entry
+                try:
+                    current_style = VoiceStyle.from_dict(json.loads(entry.content))
+                except (json.JSONDecodeError, KeyError):
+                    pass
+                break
+
+        # Read-only call — no args provided
+        if not args:
+            return {
+                "action": "read",
+                "current_style": current_style.to_dict(),
+                "annotations": sorted(VoiceStyle.KNOWN_ANNOTATIONS),
+            }
+
+        # Validate and apply updates
+        updated = current_style.to_dict()
+        errors = []
+
+        if "voice" in args:
+            v = str(args["voice"])
+            if v not in _VALID_VOICES:
+                errors.append(f"Invalid voice '{v}'. Must be one of: {sorted(_VALID_VOICES)}")
+            else:
+                updated["voice"] = v
+
+        if "speed" in args:
+            speed = float(args["speed"])
+            if not 0.25 <= speed <= 4.0:
+                errors.append("speed must be between 0.25 and 4.0")
+            else:
+                updated["speed"] = round(speed, 2)
+
+        for field in ("pause_marker", "long_pause_marker", "laugh_soft", "laugh_loud", "style_notes"):
+            if field in args:
+                updated[field] = str(args[field])
+
+        if errors:
+            return {"error": "; ".join(errors), "current_style": current_style.to_dict()}
+
+        # Persist the new style in memory
+        new_content = json.dumps(updated, ensure_ascii=False)
+        tags = [_VOICE_STYLE_TAG, "voice:config"]
+
+        if existing_entry:
+            await self._db._db.execute(
+                "UPDATE memory_entries SET content = ?, updated_at = datetime('now') WHERE id = ?",
+                (new_content, existing_entry.id),
+            )
+            await self._db._db.commit()
+        else:
+            await self._db.store(
+                type="experience",
+                content=new_content,
+                confidence=1.0,
+                provenance="voice:self_modification",
+                tags=tags,
+            )
+
+        return {
+            "action": "updated",
+            "previous_style": current_style.to_dict(),
+            "new_style": updated,
+        }
 
     async def _search_memory(self, args: dict) -> dict:
         query = str(args.get("query", ""))
