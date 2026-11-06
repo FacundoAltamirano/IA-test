@@ -81,6 +81,13 @@ class ExperimentCompleted(BaseEvent):
 
 
 @dataclass
+class EvaluationCompleted(BaseEvent):
+    verdict: str = ""  # improved | regressed | neutral
+    knowledge_gained: int = 0
+    contradictions_introduced: int = 0
+
+
+@dataclass
 class ProposalGenerated(BaseEvent):
     proposal_id: str = ""
     description: str = ""
