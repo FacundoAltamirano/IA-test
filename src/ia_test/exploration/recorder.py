@@ -20,14 +20,28 @@ class DiscoveryRecorder:
             tags=tags,
         )
 
-    async def link_to_related(self, new_entry: MemoryEntry, limit: int = 20) -> int:
-        """Link new_entry to existing entries that share meaningful keyword overlap."""
-        existing = await self._db.query(limit=limit)
+    async def link_to_related(
+        self,
+        new_entry: MemoryEntry,
+        limit: int = 200,
+        source_entry_id: str | None = None,
+    ) -> int:
+        """Link new_entry to related entries by keyword overlap.
+
+        Also creates a derived_from relation back to source_entry_id when the
+        discovery originated from a specific knowledge graph entry.
+        """
         linked = 0
+
+        if source_entry_id and source_entry_id != new_entry.id:
+            await self._db.add_relation(new_entry.id, source_entry_id, "derived_from")
+            linked += 1
+
+        existing = await self._db.query(limit=limit)
         new_words = {w for w in new_entry.content.lower().split() if len(w) > 4}
 
         for entry in existing:
-            if entry.id == new_entry.id:
+            if entry.id == new_entry.id or entry.id == source_entry_id:
                 continue
             existing_words = {w for w in entry.content.lower().split() if len(w) > 4}
             if len(new_words & existing_words) >= 2:

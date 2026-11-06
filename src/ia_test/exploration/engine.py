@@ -137,7 +137,9 @@ class ExplorationEngine:
             )
 
             entry = await self._recorder.record(discovery, question.id)
-            await self._recorder.link_to_related(entry)
+            await self._recorder.link_to_related(
+                entry, source_entry_id=question.source_entry_id
+            )
             discoveries.append(discovery)
 
             await self._event_bus.publish(

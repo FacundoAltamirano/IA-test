@@ -67,6 +67,33 @@ async def test_recorder_links_entries_with_keyword_overlap(db):
     assert new_entry.id not in gap_ids  # no longer isolated
 
 
+async def test_recorder_creates_derived_from_relation_to_source(db):
+    source = await db.store(
+        type="knowledge",
+        content="Neural networks learn from data through backpropagation",
+        confidence=0.9,
+    )
+
+    recorder = DiscoveryRecorder(db)
+    discovery = Discovery(
+        content="Gradient descent optimizes weights during neural network training",
+        source="synthesis",
+        confidence=0.75,
+    )
+    new_entry = await recorder.record(discovery, question_id="q-src-01")
+    linked = await recorder.link_to_related(new_entry, source_entry_id=source.id)
+
+    assert linked >= 1
+    # Verify derived_from relation exists in the DB
+    async with db._db.execute(
+        "SELECT relation_type FROM memory_relations WHERE source_id = ? AND target_id = ?",
+        (new_entry.id, source.id),
+    ) as cursor:
+        row = await cursor.fetchone()
+    assert row is not None
+    assert row["relation_type"] == "derived_from"
+
+
 async def test_recorder_does_not_link_unrelated_entries(db):
     await db.store(
         type="knowledge",
